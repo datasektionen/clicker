@@ -1,16 +1,12 @@
-<!--
-Author: Vibe coded by Dmitry Chirin, @Dudjfy
-Date: 03-04-2025
--->
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Clicker</title>
+    <title>Count Me Inn - Client (Real-time)</title>
     <style>
-        body {
+        /* ... (CSS remains the same) ... */
+         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             max-width: 800px;
             margin: 0 auto;
@@ -54,20 +50,25 @@ Date: 03-04-2025
             cursor: pointer;
             font-size: 16px;
             margin: 0 2px;
+            transition: background-color 0.2s ease;
         }
-        button:hover {
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        button:hover:not(:disabled) {
             background-color: #45a049;
         }
         button.remove {
             background-color: #f44336;
         }
-        button.remove:hover {
+        button.remove:hover:not(:disabled) {
             background-color: #d32f2f;
         }
         button.minus {
             background-color: #ff9800;
         }
-        button.minus:hover {
+        button.minus:hover:not(:disabled) {
             background-color: #fb8c00;
         }
         .add-form {
@@ -85,6 +86,7 @@ Date: 03-04-2025
             color: #666;
             font-style: italic;
             margin-top: 20px;
+            min-height: 1.2em; /* Prevent layout shifts */
         }
         .no-events {
             text-align: center;
@@ -99,6 +101,7 @@ Date: 03-04-2025
             border-radius: 20px;
             font-size: 12px;
             font-weight: bold;
+            transition: background-color 0.3s ease, color 0.3s ease;
         }
         .connected {
             background-color: #c8e6c9;
@@ -108,179 +111,393 @@ Date: 03-04-2025
             background-color: #ffcdd2;
             color: #c62828;
         }
+        .connecting { /* Added style for connecting state */
+             background-color: #fff9c4; /* Light yellow */
+             color: #f57f17;    /* Amber */
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(255, 255, 255, 0.7);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.5em;
+            color: #333;
+            z-index: 1000; /* Ensure it's on top */
+             visibility: hidden; /* Hide by default */
+             opacity: 0;
+             transition: opacity 0.3s ease, visibility 0s 0.3s;
+        }
+         .loading-overlay.show {
+             visibility: visible;
+             opacity: 1;
+             transition: opacity 0.3s ease;
+         }
     </style>
 </head>
 <body>
-    <div class="connection-status" id="connectionStatus">Connecting...</div>
+    <!-- Initial state is connecting -->
+    <div class="connection-status connecting" id="connectionStatus">Connecting...</div>
+    <div class="loading-overlay" id="loadingOverlay">Loading...</div>
 
     <h1>Count Me Inn</h1>
 
     <div class="add-form">
-        <input type="text" id="newEventName" placeholder="Enter event name..." value="META">
-        <button onclick="addEvent()">Create New Event</button>
+        <input type="text" id="newEventName" placeholder="Enter event name..." disabled>
+        <button onclick="addEvent()" id="addEventBtn" disabled>Create New Event</button>
     </div>
 
     <div id="eventsContainer">
-        <div class="no-events" id="noEventsMessage">
-            No events yet. Create an event to get started.
-        </div>
+        <div class="no-events" id="noEventsMessage">Connecting to server...</div>
     </div>
 
     <div class="status" id="statusMessage"></div>
 
     <script>
-        // Using local storage for data persistence
+        const API_URL = 'http://localhost:3000/api'; // Your backend API base URL
         let events = [];
         const eventsContainer = document.getElementById('eventsContainer');
         const noEventsMessage = document.getElementById('noEventsMessage');
         const statusMessage = document.getElementById('statusMessage');
         const connectionStatus = document.getElementById('connectionStatus');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const newEventNameInput = document.getElementById('newEventName');
+        const addEventBtn = document.getElementById('addEventBtn');
 
-        // Initialize state
-        let isConnected = true;
+        let sseSource = null; // To hold the EventSource object
+        let isSseConnected = false; // Track SSE connection specifically
+        let debounceTimer = null;
 
-        // Load data from local storage on startup
-        function loadEvents() {
-            try {
-                const storedEvents = localStorage.getItem('venueEvents');
-                if (storedEvents) {
-                    events = JSON.parse(storedEvents);
-                }
-            } catch (e) {
-                console.error("Error loading events from localStorage:", e);
-                events = [];
+        // --- Loading Indicator ---
+        function showLoading(show) {
+            if (show) {
+                loadingOverlay.classList.add('show');
+            } else {
+                loadingOverlay.classList.remove('show');
             }
         }
 
-        // Update connection indicator
-        function updateConnectionStatus() {
-            connectionStatus.textContent = isConnected ? "Connected" : "Disconnected";
-            connectionStatus.className = "connection-status " + (isConnected ? "connected" : "disconnected");
+
+        // --- API Helper (No changes needed) ---
+        async function apiRequest(endpoint, method = 'GET', body = null) {
+            const options = {
+                method,
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+            };
+            if (body) {
+                options.body = JSON.stringify(body);
+            }
+
+            // Show loading only for actions initiated by the user (POST, PATCH, DELETE)
+            // GET is usually in the background or initial load.
+            const showLoader = ['POST', 'PATCH', 'DELETE'].includes(method.toUpperCase());
+            if (showLoader) showLoading(true);
+
+
+            try {
+                const response = await fetch(`${API_URL}${endpoint}`, options);
+                 // Don't update connection status here solely based on API calls, rely on SSE status
+                // setConnectionStatus(true); // REMOVED
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ message: 'Unknown server error' }));
+                    throw new Error(`API Error (${response.status}): ${errorData.message || response.statusText}`);
+                }
+
+                if (response.status === 204) {
+                    return null;
+                }
+                return await response.json();
+
+            } catch (error) {
+                console.error(`API Request Failed: ${method} ${endpoint}`, error);
+                // Don't update connection status here either
+                // setConnectionStatus(false); // REMOVED
+                showStatus(`Error: ${error.message}`, true);
+                throw error;
+            } finally {
+                 if (showLoader) showLoading(false);
+            }
         }
 
-        // Watch for storage events from other tabs
-        window.addEventListener('storage', (e) => {
-            if (e.key === 'venueEvents') {
-                try {
-                    const newEvents = JSON.parse(e.newValue);
-                    if (newEvents) {
-                        events = newEvents;
-                        renderEvents();
-                        statusMessage.textContent = "Data updated from another window";
-                        setTimeout(() => {
-                            statusMessage.textContent = "";
-                        }, 3000);
+        // --- Connection Status (Updated for SSE) ---
+        function updateUiForConnectionState(connected) {
+            // Enable/disable interaction based on SSE connection
+            const allButtons = document.querySelectorAll('button');
+            const allInputs = document.querySelectorAll('input');
+            allButtons.forEach(btn => btn.disabled = !connected);
+            allInputs.forEach(input => input.disabled = !connected);
+            // Special case for the connection indicator itself
+            connectionStatus.disabled = false;
+        }
+
+        function setConnectionStatus(status, message) {
+             // status can be 'connecting', 'connected', 'disconnected'
+             connectionStatus.textContent = message;
+             connectionStatus.className = "connection-status " + status; // Use status directly as class
+
+             isSseConnected = (status === 'connected');
+             updateUiForConnectionState(isSseConnected);
+
+              // Update placeholder text based on connection
+              if (isSseConnected && events.length === 0) {
+                 noEventsMessage.textContent = 'No events created yet. Add one above!';
+                 noEventsMessage.style.display = 'block';
+              } else if (!isSseConnected && status !== 'connecting') {
+                 noEventsMessage.textContent = 'Connection lost. Attempting to reconnect...';
+                  noEventsMessage.style.display = events.length === 0 ? 'block' : 'none'; // Show if no events loaded
+              } else if (status === 'connecting') {
+                  noEventsMessage.textContent = 'Connecting to server...';
+                  noEventsMessage.style.display = 'block'; // Always show when connecting initially
+              }
+        }
+
+        // --- Status Messages (No changes needed) ---
+        function showStatus(message, isError = false) {
+             clearTimeout(debounceTimer);
+            statusMessage.textContent = message;
+            statusMessage.style.color = isError ? '#c62828' : '#666';
+
+             if (!isError || message.startsWith("Connected")) {
+                 debounceTimer = setTimeout(() => {
+                    if (statusMessage.textContent === message) {
+                         statusMessage.textContent = "";
                     }
-                } catch (err) {
-                    console.error("Error parsing events from another tab:", err);
-                }
+                }, 4000);
             }
-        });
+        }
 
-        function saveEvents() {
+
+         // --- SSE Event Handling ---
+         function handleSseMessage(event) {
+             try {
+                 const data = JSON.parse(event.data);
+                 console.log("SSE Received:", data);
+
+                 switch (data.type) {
+                     case 'connected':
+                         // Optional: log connection ID or perform initial setup
+                         console.log(`SSE Connected with Client ID: ${data.payload?.clientId}`);
+                         // Initial data load should happen separately via REST
+                         break;
+                     case 'event_added':
+                         // Avoid duplicates if the event adding client gets the SSE too
+                         if (!events.some(e => e.id === data.payload.id)) {
+                            // Ensure counters array exists
+                            data.payload.counters = data.payload.counters || [];
+                            events.push(data.payload);
+                            showStatus(`New event added: "${data.payload.name}"`);
+                         }
+                         break;
+                     case 'event_removed':
+                         const removedEventId = data.payload.eventId;
+                         const removedEventIndex = events.findIndex(e => e.id === removedEventId);
+                          if (removedEventIndex > -1) {
+                            const removedEventName = events[removedEventIndex].name;
+                            events.splice(removedEventIndex, 1);
+                            showStatus(`Event removed: "${removedEventName}"`);
+                          }
+                         break;
+                     case 'counter_added':
+                         const targetEventAdd = events.find(e => e.id === data.payload.event_id);
+                         if (targetEventAdd) {
+                             // Ensure counters array exists
+                             targetEventAdd.counters = targetEventAdd.counters || [];
+                             // Avoid duplicates
+                             if (!targetEventAdd.counters.some(c => c.id === data.payload.id)) {
+                                 targetEventAdd.counters.push(data.payload);
+                                 showStatus(`Counter "${data.payload.name}" added to "${targetEventAdd.name}"`);
+                             }
+                         }
+                         break;
+                     case 'counter_removed':
+                         const targetEventRemove = events.find(e => e.id === data.payload.eventId);
+                         if (targetEventRemove && targetEventRemove.counters) {
+                             const removedCounterIndex = targetEventRemove.counters.findIndex(c => c.id === data.payload.counterId);
+                             if (removedCounterIndex > -1) {
+                                const removedCounterName = targetEventRemove.counters[removedCounterIndex].name;
+                                targetEventRemove.counters.splice(removedCounterIndex, 1);
+                                showStatus(`Counter "${removedCounterName}" removed from "${targetEventRemove.name}"`);
+                             }
+                         }
+                         break;
+                     case 'counter_updated':
+                         const targetEventUpdate = events.find(e => e.id === data.payload.event_id);
+                         if (targetEventUpdate && targetEventUpdate.counters) {
+                             const targetCounterUpdate = targetEventUpdate.counters.find(c => c.id === data.payload.id);
+                             if (targetCounterUpdate) {
+                                 targetCounterUpdate.count = data.payload.count;
+                                 // Maybe don't show status for every single count update? It could be noisy.
+                                 // showStatus(`Counter "${targetCounterUpdate.name}" updated`);
+                             }
+                         }
+                         break;
+                    case 'error': // Handle errors broadcast by server (optional)
+                        showStatus(`Server Error: ${data.payload.message}`, true);
+                        break;
+                     default:
+                         console.warn("Received unknown SSE event type:", data.type);
+                 }
+
+                 // Re-render after any state change
+                 renderEvents();
+
+             } catch (error) {
+                 console.error("Error parsing SSE data:", error, "Raw data:", event.data);
+                 showStatus("Received invalid update from server.", true);
+             }
+         }
+
+        function connectSSE() {
+            if (sseSource && sseSource.readyState !== EventSource.CLOSED) {
+                console.log("SSE connection already open or connecting.");
+                return;
+            }
+
+            setConnectionStatus('connecting', 'Connecting...');
+            sseSource = new EventSource(`${API_URL}/events/stream`);
+
+            sseSource.onopen = () => {
+                console.log("SSE Connection Opened");
+                setConnectionStatus('connected', 'Connected');
+                 showStatus("Real-time updates enabled.");
+                // Load initial data *after* connection is confirmed open
+                loadEvents();
+            };
+
+            sseSource.onmessage = handleSseMessage;
+
+            sseSource.onerror = (error) => {
+                console.error("SSE Error:", error);
+                setConnectionStatus('disconnected', 'Disconnected');
+                showStatus("Connection error. Trying to reconnect...", true);
+                // EventSource handles automatic reconnection by default.
+                // We just update the UI state.
+                sseSource.close(); // Close the potentially broken source before it retries internally
+                // Optionally add a delay before explicit reconnect attempt if EventSource retry fails
+                 setTimeout(connectSSE, 5000); // Try reconnecting explicitly after 5 seconds
+            };
+        }
+
+
+        // --- Core Logic (Modified to use apiRequest, SSE updates handle state changes) ---
+        async function loadEvents() {
+            // showLoading(true); // Show loading for initial fetch
             try {
-                localStorage.setItem('venueEvents', JSON.stringify(events));
-            } catch (e) {
-                console.error("Error saving events to localStorage:", e);
-                statusMessage.textContent = "Error saving data. Local storage may be full.";
-                setTimeout(() => {
-                    statusMessage.textContent = "";
-                }, 5000);
+                const fetchedEvents = await apiRequest('/events');
+                events = fetchedEvents.map(event => ({
+                    ...event,
+                    counters: event.counters || []
+                }));
+                renderEvents(); // Render initial state
+                showStatus("Events loaded.");
+            } catch (error) {
+                 showStatus("Failed to load initial events.", true);
+                 renderEvents(); // Render to show empty state message
+            } finally {
+                 // showLoading(false);
             }
         }
 
-        function addEvent() {
-            const newEventNameInput = document.getElementById('newEventName');
-            const newEventName = newEventNameInput.value.trim();
-
-            if (newEventName) {
-                const newEvent = {
-                    id: Date.now(),
-                    name: newEventName,
-                    counters: [{
-                        id: Date.now() + 1,
-                        name: 'Main Entrance',
-                        count: 0
-                    }]
-                };
-
-                events.push(newEvent);
-                saveEvents();
-                renderEvents();
-
-                newEventNameInput.value = '';
-            }
+        // Actions just call the API. State updates are handled by SSE listener.
+        async function addEvent() {
+             const newEventName = newEventNameInput.value.trim();
+             if (!newEventName) {
+                 showStatus("Event name cannot be empty.", true);
+                 return;
+             }
+             try {
+                 // API call triggers broadcast on success
+                 await apiRequest('/events', 'POST', { name: newEventName });
+                 newEventNameInput.value = ''; // Clear input on successful request initiation
+                 // showStatus(`Event "${newEventName}" creation requested.`); // Optimistic message
+                 // Actual update comes via SSE
+             } catch (error) {
+                 // Error already shown by apiRequest
+             }
         }
 
-        function removeEvent(eventId) {
-            if (confirm("Are you sure you want to remove this event and all its counters?")) {
-                events = events.filter(event => event.id !== eventId);
-                saveEvents();
-                renderEvents();
-            }
+        async function removeEvent(eventId) {
+             if (!confirm("Are you sure you want to remove this event?")) return;
+             try {
+                 await apiRequest(`/events/${eventId}`, 'DELETE');
+                 // showStatus(`Event removal requested.`);
+             } catch (error) {}
         }
 
-        function addCounter(eventId) {
-            const event = events.find(e => e.id === eventId);
-            const counterName = prompt("Enter counter name:", "New Counter");
-
-            if (event && counterName && counterName.trim()) {
-                event.counters.push({
-                    id: Date.now(),
-                    name: counterName.trim(),
-                    count: 0
-                });
-                saveEvents();
-                renderEvents();
-            }
+        async function addCounter(eventId) {
+             const counterName = prompt("Enter new counter name:", "New Counter");
+             if (!counterName || !counterName.trim()) {
+                 showStatus("Counter name cannot be empty.", true);
+                 return;
+             }
+             try {
+                 await apiRequest(`/events/${eventId}/counters`, 'POST', { name: counterName.trim() });
+                 // showStatus(`Counter addition requested.`);
+             } catch (error) {}
         }
 
-        function removeCounter(eventId, counterId) {
-            const event = events.find(e => e.id === eventId);
-            if (event) {
-                // Don't allow removing the last counter
-                if (event.counters.length <= 1) {
-                    alert("Cannot remove the last counter. You must have at least one counter per event.");
-                    return;
-                }
-
-                event.counters = event.counters.filter(c => c.id !== counterId);
-                saveEvents();
-                renderEvents();
-            }
+        async function removeCounter(eventId, counterId) {
+              const event = events.find(e => e.id === eventId);
+              if (event && event.counters.length <= 1) {
+                  alert("Cannot remove the last counter.");
+                  return;
+              }
+              if (!confirm("Are you sure you want to remove this counter?")) return;
+              try {
+                  await apiRequest(`/events/${eventId}/counters/${counterId}`, 'DELETE');
+                 // showStatus(`Counter removal requested.`);
+              } catch (error) {}
         }
 
-        function updateCount(eventId, counterId, amount) {
-            const event = events.find(e => e.id === eventId);
-            if (event) {
-                const counter = event.counters.find(c => c.id === counterId);
-                if (counter) {
-                    counter.count += amount;
-                    // Don't allow negative counts
-                    if (counter.count < 0) counter.count = 0;
-                    saveEvents();
-                    renderEvents();
-                }
-            }
+        async function updateCount(eventId, counterId, change) {
+             // No optimistic update needed here, SSE will provide the confirmed state.
+             // Prevent sending update if trying to decrement below zero.
+             const event = events.find(e => e.id === eventId);
+             const counter = event?.counters.find(c => c.id === counterId);
+             if (change < 0 && (!counter || counter.count <= 0)) {
+                console.log("Attempted to decrement below zero. Ignoring.");
+                 return;
+             }
+
+             try {
+                 await apiRequest(`/events/${eventId}/counters/${counterId}`, 'PATCH', { change });
+                 // showStatus(`Count update requested.`);
+             } catch (error) {}
         }
 
+        // --- Rendering (No significant changes needed, but ensure IDs are correct) ---
         function calculateEventTotal(event) {
+            if (!event || !Array.isArray(event.counters)) return 0;
             return event.counters.reduce((sum, counter) => sum + (counter.count || 0), 0);
         }
 
         function renderEvents() {
-            if (events.length === 0) {
-                noEventsMessage.style.display = 'block';
+             console.log("Rendering events:", events); // Debug log
+            if (!events || events.length === 0) {
+                 // Message content is handled by setConnectionStatus now
+                 noEventsMessage.style.display = 'block';
                 eventsContainer.innerHTML = '';
+                eventsContainer.appendChild(noEventsMessage); // Ensure message is inside container
                 return;
             }
 
             noEventsMessage.style.display = 'none';
-            eventsContainer.innerHTML = '';
+            eventsContainer.innerHTML = ''; // Clear previous rendering
+
+            // Sort events perhaps? By name or date? Optional.
+            // events.sort((a, b) => a.name.localeCompare(b.name));
 
             events.forEach(event => {
                 const eventDiv = document.createElement('div');
                 eventDiv.className = 'event-container';
+                eventDiv.dataset.eventId = event.id;
 
                 const eventTotal = calculateEventTotal(event);
 
@@ -293,13 +510,12 @@ Date: 03-04-2025
                 eventTitle.textContent = event.name;
                 eventHeader.appendChild(eventTitle);
 
-                const removeBtn = document.createElement('button');
-                removeBtn.className = 'remove';
-                removeBtn.textContent = 'Remove Event';
-                removeBtn.addEventListener('click', function() {
-                    removeEvent(event.id);
-                });
-                eventHeader.appendChild(removeBtn);
+                const removeEventBtn = document.createElement('button');
+                removeEventBtn.className = 'remove';
+                removeEventBtn.textContent = 'Remove Event';
+                removeEventBtn.disabled = !isSseConnected; // Disable based on SSE connection
+                removeEventBtn.onclick = () => removeEvent(event.id);
+                eventHeader.appendChild(removeEventBtn);
                 eventDiv.appendChild(eventHeader);
 
                 const totalDiv = document.createElement('div');
@@ -308,9 +524,13 @@ Date: 03-04-2025
                 totalDiv.innerHTML = `Total Attendance: <strong>${eventTotal}</strong> people`;
                 eventDiv.appendChild(totalDiv);
 
-                event.counters.forEach(counter => {
+                // Sort counters? Optional.
+                const sortedCounters = event.counters ? [...event.counters].sort((a, b) => a.name.localeCompare(b.name)) : [];
+
+                sortedCounters.forEach(counter => {
                     const counterDiv = document.createElement('div');
                     counterDiv.className = 'counter-container';
+                    counterDiv.dataset.counterId = counter.id;
 
                     const nameDiv = document.createElement('div');
                     nameDiv.className = 'counter-name';
@@ -319,31 +539,29 @@ Date: 03-04-2025
 
                     const valueDiv = document.createElement('div');
                     valueDiv.className = 'counter-value';
-                    valueDiv.textContent = counter.count || 0;
+                    valueDiv.textContent = counter.count ?? 0;
                     counterDiv.appendChild(valueDiv);
 
                     const minusBtn = document.createElement('button');
                     minusBtn.className = 'minus';
                     minusBtn.textContent = '-';
-                    minusBtn.addEventListener('click', function() {
-                        updateCount(event.id, counter.id, -1);
-                    });
+                    minusBtn.disabled = !isSseConnected || counter.count <= 0;
+                    minusBtn.onclick = () => updateCount(event.id, counter.id, -1);
                     counterDiv.appendChild(minusBtn);
 
                     const plusBtn = document.createElement('button');
                     plusBtn.textContent = '+';
-                    plusBtn.addEventListener('click', function() {
-                        updateCount(event.id, counter.id, 1);
-                    });
+                    plusBtn.disabled = !isSseConnected;
+                    plusBtn.onclick = () => updateCount(event.id, counter.id, 1);
                     counterDiv.appendChild(plusBtn);
 
-                    const deleteBtn = document.createElement('button');
-                    deleteBtn.className = 'remove';
-                    deleteBtn.textContent = '×';
-                    deleteBtn.addEventListener('click', function() {
-                        removeCounter(event.id, counter.id);
-                    });
-                    counterDiv.appendChild(deleteBtn);
+                    const removeCounterBtn = document.createElement('button');
+                    removeCounterBtn.className = 'remove';
+                    removeCounterBtn.textContent = '×';
+                    removeCounterBtn.disabled = !isSseConnected || (event.counters && event.counters.length <= 1);
+                    removeCounterBtn.title = (event.counters && event.counters.length <= 1) ? "Cannot remove the last counter" : "Remove counter";
+                    removeCounterBtn.onclick = () => removeCounter(event.id, counter.id);
+                    counterDiv.appendChild(removeCounterBtn);
 
                     eventDiv.appendChild(counterDiv);
                 });
@@ -353,51 +571,40 @@ Date: 03-04-2025
 
                 const addCounterBtn = document.createElement('button');
                 addCounterBtn.textContent = 'Add Counter';
-                addCounterBtn.addEventListener('click', function() {
-                    addCounter(event.id);
-                });
+                addCounterBtn.disabled = !isSseConnected;
+                addCounterBtn.onclick = () => addCounter(event.id);
                 addCounterDiv.appendChild(addCounterBtn);
                 eventDiv.appendChild(addCounterDiv);
 
                 eventsContainer.appendChild(eventDiv);
             });
+              // Update UI disabled state after rendering, just in case
+             updateUiForConnectionState(isSseConnected);
         }
 
-        // Make Enter key work for adding events
-        document.getElementById('newEventName').addEventListener('keypress', function(e) {
-            if (e.key === 'Enter') {
-                addEvent();
-            }
-        });
-
-        // Initialize
+        // --- Initialization ---
         function init() {
-            loadEvents();
-            renderEvents();
-            updateConnectionStatus();
+            // Initial UI state
+            setConnectionStatus('connecting', 'Connecting...'); // Show connecting initially
+            renderEvents(); // Render empty state initially
 
-            // Simulate connection status changes periodically
-            setInterval(() => {
-                // 90% chance of being connected
-                isConnected = Math.random() > 0.1;
-                updateConnectionStatus();
 
-                if (!isConnected) {
-                    statusMessage.textContent = "Connection lost. Trying to reconnect...";
-                    setTimeout(() => {
-                        isConnected = true;
-                        updateConnectionStatus();
-                        statusMessage.textContent = "Reconnected! Your counts are synchronized.";
-                        setTimeout(() => {
-                            statusMessage.textContent = "";
-                        }, 3000);
-                    }, 2000);
+            // Make Enter key work for adding events
+            newEventNameInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter' && !addEventBtn.disabled) {
+                    addEvent();
                 }
-            }, 30000); // Check every 30 seconds
+            });
+
+            // Start the SSE connection process
+            connectSSE();
+
+            // No need for the setInterval check anymore, SSE handles connection status
         }
 
-        // Initialize the app
+        // Start the application
         init();
+
     </script>
 </body>
 </html>
