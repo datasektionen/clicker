@@ -1,0 +1,414 @@
+<!--
+Author: Vibe coded by Dmitry Chirin, @Dudjfy
+Date: 03-04-2025
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Venue Attendance Counter</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .event-container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .counter-container {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        .counter-name {
+            flex: 1;
+            font-weight: bold;
+        }
+        .counter-value {
+            font-size: 24px;
+            margin: 0 15px;
+            min-width: 40px;
+            text-align: center;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 0 2px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button.remove {
+            background-color: #f44336;
+        }
+        button.remove:hover {
+            background-color: #d32f2f;
+        }
+        button.minus {
+            background-color: #ff9800;
+        }
+        button.minus:hover {
+            background-color: #fb8c00;
+        }
+        .add-form {
+            margin: 15px 0;
+            display: flex;
+            gap: 10px;
+        }
+        input {
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            flex: 1;
+        }
+        .status {
+            color: #666;
+            font-style: italic;
+            margin-top: 20px;
+        }
+        .no-events {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+        }
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .connected {
+            background-color: #c8e6c9;
+            color: #2e7d32;
+        }
+        .disconnected {
+            background-color: #ffcdd2;
+            color: #c62828;
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-status" id="connectionStatus">Connecting...</div>
+
+    <h1>Venue Attendance Counter</h1>
+
+    <div class="add-form">
+        <input type="text" id="newEventName" placeholder="Enter event name...">
+        <button onclick="addEvent()">Create New Event</button>
+    </div>
+
+    <div id="eventsContainer">
+        <div class="no-events" id="noEventsMessage">
+            No events yet. Create an event to get started.
+        </div>
+    </div>
+
+    <div class="status" id="statusMessage"></div>
+
+    <script>
+        // Using local storage for data persistence
+        let events = [];
+        const eventsContainer = document.getElementById('eventsContainer');
+        const noEventsMessage = document.getElementById('noEventsMessage');
+        const statusMessage = document.getElementById('statusMessage');
+        const connectionStatus = document.getElementById('connectionStatus');
+
+        // Initialize state
+        let isConnected = true;
+
+        // Load data from local storage on startup
+        function loadEvents() {
+            try {
+                const storedEvents = localStorage.getItem('venueEvents');
+                if (storedEvents) {
+                    events = JSON.parse(storedEvents);
+                }
+            } catch (e) {
+                console.error("Error loading events from localStorage:", e);
+                events = [];
+            }
+        }
+
+        // Update connection indicator
+        function updateConnectionStatus() {
+            connectionStatus.textContent = isConnected ? "Connected" : "Disconnected";
+            connectionStatus.className = "connection-status " + (isConnected ? "connected" : "disconnected");
+        }
+
+        // Initialize
+        function init() {
+            loadEvents();
+            renderEvents();
+            updateConnectionStatus();
+
+            // Simulate connection status changes periodically
+            setInterval(() => {
+                // 90% chance of being connected
+                isConnected = Math.random() > 0.1;
+                updateConnectionStatus();
+
+                if (!isConnected) {
+                    statusMessage.textContent = "Connection lost. Trying to reconnect...";
+                    setTimeout(() => {
+                        isConnected = true;
+                        updateConnectionStatus();
+                        statusMessage.textContent = "Reconnected! Your counts are synchronized.";
+                        setTimeout(() => {
+                            statusMessage.textContent = "";
+                        }, 3000);
+                    }, 2000);
+                }
+            }, 30000); // Check every 30 seconds
+        }
+
+        // Watch for storage events from other tabs
+        window.addEventListener('storage', (e) => {
+            if (e.key === 'venueEvents') {
+                try {
+                    const newEvents = JSON.parse(e.newValue);
+                    if (newEvents) {
+                        events = newEvents;
+                        renderEvents();
+                        statusMessage.textContent = "Data updated from another window";
+                        setTimeout(() => {
+                            statusMessage.textContent = "";
+                        }, 3000);
+                    }
+                } catch (err) {
+                    console.error("Error parsing events from another tab:", err);
+                }
+            }
+        });
+
+        function saveEvents() {
+            try {
+                localStorage.setItem('venueEvents', JSON.stringify(events));
+            } catch (e) {
+                console.error("Error saving events to localStorage:", e);
+                statusMessage.textContent = "Error saving data. Local storage may be full.";
+                setTimeout(() => {
+                    statusMessage.textContent = "";
+                }, 5000);
+            }
+        }
+
+        function addEvent() {
+            const newEventNameInput = document.getElementById('newEventName');
+            const newEventName = newEventNameInput.value.trim();
+
+            if (newEventName) {
+                const newEvent = {
+                    id: Date.now(),
+                    name: newEventName,
+                    counters: [{
+                        id: Date.now() + 1,
+                        name: 'Main Entrance',
+                        count: 0
+                    }]
+                };
+
+                events.push(newEvent);
+                saveEvents();
+                renderEvents();
+
+                newEventNameInput.value = '';
+            }
+        }
+
+        function removeEvent(eventId) {
+            if (confirm("Are you sure you want to remove this event and all its counters?")) {
+                events = events.filter(event => event.id !== eventId);
+                saveEvents();
+                renderEvents();
+            }
+        }
+
+        function addCounter(eventId) {
+            const event = events.find(e => e.id === eventId);
+            const counterName = prompt("Enter counter name:", "New Counter");
+
+            if (event && counterName && counterName.trim()) {
+                event.counters.push({
+                    id: Date.now(),
+                    name: counterName.trim(),
+                    count: 0
+                });
+                saveEvents();
+                renderEvents();
+            }
+        }
+
+        function removeCounter(eventId, counterId) {
+            const event = events.find(e => e.id === eventId);
+            if (event) {
+                // Don't allow removing the last counter
+                if (event.counters.length <= 1) {
+                    alert("Cannot remove the last counter. You must have at least one counter per event.");
+                    return;
+                }
+
+                event.counters = event.counters.filter(c => c.id !== counterId);
+                saveEvents();
+                renderEvents();
+            }
+        }
+
+        function updateCount(eventId, counterId, amount) {
+            const event = events.find(e => e.id === eventId);
+            if (event) {
+                const counter = event.counters.find(c => c.id === counterId);
+                if (counter) {
+                    counter.count += amount;
+                    // Don't allow negative counts
+                    if (counter.count < 0) counter.count = 0;
+                    saveEvents();
+                    renderEvents();
+                }
+            }
+        }
+
+        function calculateEventTotal(event) {
+            return event.counters.reduce((sum, counter) => sum + (counter.count || 0), 0);
+        }
+
+        function renderEvents() {
+            if (events.length === 0) {
+                noEventsMessage.style.display = 'block';
+                eventsContainer.innerHTML = '';
+                return;
+            }
+
+            noEventsMessage.style.display = 'none';
+            eventsContainer.innerHTML = '';
+
+            events.forEach(event => {
+                const eventDiv = document.createElement('div');
+                eventDiv.className = 'event-container';
+
+                const eventTotal = calculateEventTotal(event);
+
+                const eventHeader = document.createElement('div');
+                eventHeader.style.display = 'flex';
+                eventHeader.style.justifyContent = 'space-between';
+                eventHeader.style.alignItems = 'center';
+
+                const eventTitle = document.createElement('h2');
+                eventTitle.textContent = event.name;
+                eventHeader.appendChild(eventTitle);
+
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'remove';
+                removeBtn.textContent = 'Remove Event';
+                removeBtn.addEventListener('click', function() {
+                    removeEvent(event.id);
+                });
+                eventHeader.appendChild(removeBtn);
+                eventDiv.appendChild(eventHeader);
+
+                const totalDiv = document.createElement('div');
+                totalDiv.style.marginBottom = '15px';
+                totalDiv.style.fontSize = '18px';
+                totalDiv.innerHTML = `Total Attendance: <strong>${eventTotal}</strong> people`;
+                eventDiv.appendChild(totalDiv);
+
+                event.counters.forEach(counter => {
+                    const counterDiv = document.createElement('div');
+                    counterDiv.className = 'counter-container';
+
+                    const nameDiv = document.createElement('div');
+                    nameDiv.className = 'counter-name';
+                    nameDiv.textContent = counter.name;
+                    counterDiv.appendChild(nameDiv);
+
+                    const valueDiv = document.createElement('div');
+                    valueDiv.className = 'counter-value';
+                    valueDiv.textContent = counter.count || 0;
+                    counterDiv.appendChild(valueDiv);
+
+                    const minusBtn = document.createElement('button');
+                    minusBtn.className = 'minus';
+                    minusBtn.textContent = '-';
+                    minusBtn.addEventListener('click', function() {
+                        updateCount(event.id, counter.id, -1);
+                    });
+                    counterDiv.appendChild(minusBtn);
+
+                    const plusBtn = document.createElement('button');
+                    plusBtn.textContent = '+';
+                    plusBtn.addEventListener('click', function() {
+                        updateCount(event.id, counter.id, 1);
+                    });
+                    counterDiv.appendChild(plusBtn);
+
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'remove';
+                    deleteBtn.textContent = '×';
+                    deleteBtn.addEventListener('click', function() {
+                        removeCounter(event.id, counter.id);
+                    });
+                    counterDiv.appendChild(deleteBtn);
+
+                    eventDiv.appendChild(counterDiv);
+                });
+
+                const addCounterDiv = document.createElement('div');
+                addCounterDiv.style.marginTop = '10px';
+
+                const addCounterBtn = document.createElement('button');
+                addCounterBtn.textContent = 'Add Counter';
+                addCounterBtn.addEventListener('click', function() {
+                    addCounter(event.id);
+                });
+                addCounterDiv.appendChild(addCounterBtn);
+                eventDiv.appendChild(addCounterDiv);
+
+                eventsContainer.appendChild(eventDiv);
+            });
+        }
+
+        // Helper function to prevent XSS
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        // Make Enter key work for adding events
+        document.getElementById('newEventName').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                addEvent();
+            }
+        });
+
+        // Initialize the app
+        init();
+    </script>
+</body>
+</html>
