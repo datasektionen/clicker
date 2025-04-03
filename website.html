@@ -158,32 +158,6 @@ Date: 03-04-2025
             connectionStatus.className = "connection-status " + (isConnected ? "connected" : "disconnected");
         }
 
-        // Initialize
-        function init() {
-            loadEvents();
-            renderEvents();
-            updateConnectionStatus();
-
-            // Simulate connection status changes periodically
-            setInterval(() => {
-                // 90% chance of being connected
-                isConnected = Math.random() > 0.1;
-                updateConnectionStatus();
-
-                if (!isConnected) {
-                    statusMessage.textContent = "Connection lost. Trying to reconnect...";
-                    setTimeout(() => {
-                        isConnected = true;
-                        updateConnectionStatus();
-                        statusMessage.textContent = "Reconnected! Your counts are synchronized.";
-                        setTimeout(() => {
-                            statusMessage.textContent = "";
-                        }, 3000);
-                    }, 2000);
-                }
-            }, 30000); // Check every 30 seconds
-        }
-
         // Watch for storage events from other tabs
         window.addEventListener('storage', (e) => {
             if (e.key === 'venueEvents') {
@@ -406,6 +380,32 @@ Date: 03-04-2025
                 addEvent();
             }
         });
+
+        // Initialize
+        function init() {
+            loadEvents();
+            renderEvents();
+            updateConnectionStatus();
+
+            // Simulate connection status changes periodically
+            setInterval(() => {
+                // 90% chance of being connected
+                isConnected = Math.random() > 0.1;
+                updateConnectionStatus();
+
+                if (!isConnected) {
+                    statusMessage.textContent = "Connection lost. Trying to reconnect...";
+                    setTimeout(() => {
+                        isConnected = true;
+                        updateConnectionStatus();
+                        statusMessage.textContent = "Reconnected! Your counts are synchronized.";
+                        setTimeout(() => {
+                            statusMessage.textContent = "";
+                        }, 3000);
+                    }, 2000);
+                }
+            }, 30000); // Check every 30 seconds
+        }
 
         // Initialize the app
         init();
