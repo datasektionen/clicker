@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event Counter</title>
+    <style>
+        /* Basic Styles - Adapt or link to your shared CSS */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            padding: 20px;
+            background-color: #f5f5f5;
+            display: flex; /* Use flexbox for centering */
+            flex-direction: column;
+            align-items: center; /* Center content horizontally */
+            min-height: 100vh; /* Ensure body takes full height */
+            box-sizing: border-box;
+        }
+        .main-content {
+             background-color: white;
+             border-radius: 8px;
+             padding: 20px 30px;
+             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+             width: 100%;
+             max-width: 600px; /* Limit width */
+             margin-top: 20px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 5px;
+        }
+        .event-total {
+             font-size: 1.2em;
+             color: #555;
+             text-align: center;
+             margin-bottom: 25px;
+        }
+
+        .counter-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); /* Responsive grid */
+            gap: 20px; /* Spacing between grid items */
+        }
+
+        .entrance-counter {
+            background-color: #f9f9f9;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between; /* Push buttons down */
+             box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .entrance-name {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #444;
+            margin-bottom: 15px; /* Increased space */
+            word-wrap: break-word; /* Prevent long names overflowing */
+        }
+        .entrance-value {
+            font-size: 3em; /* Larger count */
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 15px; /* Increased space */
+        }
+        .entrance-buttons {
+            display: flex;
+            justify-content: center; /* Center buttons */
+            gap: 15px; /* Generous spacing */
+        }
+        .entrance-buttons button {
+            background-color: #4CAF50; /* Green for plus */
+            color: white;
+            border: none;
+            width: 60px; /* Larger, square-ish buttons */
+            height: 60px;
+            border-radius: 50%; /* Circular buttons */
+            cursor: pointer;
+            font-size: 2.5em; /* Large symbols */
+            font-weight: bold;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+         .entrance-buttons button:active {
+             transform: scale(0.95); /* Click feedback */
+         }
+
+        .entrance-buttons button.minus {
+            background-color: #ff9800; /* Orange for minus */
+        }
+        .entrance-buttons button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+            opacity: 0.7;
+             box-shadow: none;
+        }
+        .entrance-buttons button:hover:not(:disabled) {
+            filter: brightness(110%);
+        }
+        .status {
+            color: #666;
+            font-style: italic;
+            margin-top: 20px;
+            text-align: center;
+            min-height: 1.2em;
+        }
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            transition: background-color 0.3s ease, color 0.3s ease;
+        }
+        .connected { background-color: #c8e6c9; color: #2e7d32; }
+        .disconnected { background-color: #ffcdd2; color: #c62828; }
+        .connecting { background-color: #fff9c4; color: #f57f17; }
+
+        .loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(255, 255, 255, 0.7); display: flex;
+            justify-content: center; align-items: center; font-size: 1.5em;
+            color: #333; z-index: 1000; visibility: hidden; opacity: 0;
+            transition: opacity 0.3s ease, visibility 0s 0.3s;
+        }
+        .loading-overlay.show { visibility: visible; opacity: 1; transition: opacity 0.3s ease; }
+
+         .error-message {
+             color: #c62828;
+             font-weight: bold;
+             text-align: center;
+             padding: 20px;
+             background-color: #ffcdd2;
+             border: 1px solid #ef9a9a;
+             border-radius: 4px;
+         }
+    </style>
+</head>
+<body>
+    <div class="connection-status connecting" id="connectionStatus">Connecting...</div>
+    <div class="loading-overlay" id="loadingOverlay">Loading Event...</div>
+
+    <div class="main-content" id="mainContent" style="display: none;"> <h1 id="eventName">Event Name</h1>
+        <div class="event-total" id="eventTotal">Total: 0</div>
+        <div class="counter-grid" id="countersContainer">
+            </div>
+    </div>
+     <div id="errorMessage" class="error-message" style="display: none;"></div> <div class="status" id="statusMessage"></div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/api'; // Adjust if needed
+        let currentEventData = null;
+        let currentEventId = null;
+        let sseSource = null;
+        let isSseConnected = false;
+        let debounceTimer = null;
+
+        // DOM Elements
+        const eventNameEl = document.getElementById('eventName');
+        const eventTotalEl = document.getElementById('eventTotal');
+        const countersContainer = document.getElementById('countersContainer');
+        const statusMessage = document.getElementById('statusMessage');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+        const mainContentEl = document.getElementById('mainContent');
+        const errorMessageEl = document.getElementById('errorMessage');
+
+
+        // --- Utility Functions (Copied/Adapted from index.html) ---
+
+        function showLoading(show) {
+            if (show) loadingOverlay.classList.add('show');
+            else loadingOverlay.classList.remove('show');
+        }
+
+        async function apiRequest(endpoint, method = 'GET', body = null) {
+            // ... (This function can be copied directly from index.html) ...
+            // ... MAKE SURE it exists here ...
+              const options = {
+                  method,
+                  headers: {
+                      'Content-Type': 'application/json',
+                  },
+              };
+              if (body) {
+                  options.body = JSON.stringify(body);
+              }
+              const showLoader = ['POST', 'PATCH', 'DELETE'].includes(method.toUpperCase());
+               if (showLoader) showLoading(true);
+
+              try {
+                  const response = await fetch(`${API_URL}${endpoint}`, options);
+                  if (!response.ok) {
+                      const errorData = await response.json().catch(() => ({ message: 'Unknown server error' }));
+                      throw new Error(`API Error (${response.status}): ${errorData.message || response.statusText}`);
+                  }
+                  if (response.status === 204) return null;
+                  return await response.json();
+              } catch (error) {
+                  console.error(`API Request Failed: ${method} ${endpoint}`, error);
+                  showStatus(`Error: ${error.message}`, true);
+                  // Don't set connection status based on single API errors if SSE is the main indicator
+                  throw error; // Re-throw to be handled by caller
+              } finally {
+                   if (showLoader) showLoading(false);
+              }
+        }
+
+         function updateUiForConnectionState(connected) {
+             const allButtons = document.querySelectorAll('.entrance-buttons button');
+             allButtons.forEach(btn => btn.disabled = !connected);
+
+             // Re-disable minus buttons if count is 0, even if connected
+             if (connected && currentEventData && currentEventData.counters) {
+                 currentEventData.counters.forEach(counter => {
+                     const minusBtn = countersContainer.querySelector(`[data-counter-id="${counter.id}"] .minus`);
+                     if (minusBtn && counter.count <= 0) {
+                         minusBtn.disabled = true;
+                     }
+                 });
+             }
+         }
+
+        function setConnectionStatus(status, message) {
+             connectionStatus.textContent = message;
+             connectionStatus.className = "connection-status " + status;
+             isSseConnected = (status === 'connected');
+             updateUiForConnectionState(isSseConnected);
+        }
+
+        function showStatus(message, isError = false) {
+            // ... (This function can be copied directly from index.html) ...
+              clearTimeout(debounceTimer);
+              statusMessage.textContent = message;
+              statusMessage.style.color = isError ? '#c62828' : '#666';
+              statusMessage.style.textAlign = 'center'; // Ensure it's centered
+
+              if (!isError || message.startsWith("Connected")) { // Keep persistent errors visible longer
+                  debounceTimer = setTimeout(() => {
+                      if (statusMessage.textContent === message) {
+                           statusMessage.textContent = "";
+                      }
+                  }, 5000); // Slightly longer display
+              }
+        }
+
+        // --- Core Logic for Single Event Page ---
+
+        function calculateEventTotal(eventData) {
+            if (!eventData || !Array.isArray(eventData.counters)) return 0;
+            return eventData.counters.reduce((sum, counter) => sum + (counter.count || 0), 0);
+        }
+
+        function renderEventDetails() {
+            if (!currentEventData) {
+                 console.error("No event data to render.");
+                 errorMessageEl.textContent = "Could not load event data.";
+                 errorMessageEl.style.display = 'block';
+                 mainContentEl.style.display = 'none';
+                 showLoading(false);
+                 return;
+            }
+
+             errorMessageEl.style.display = 'none'; // Hide error if data is now available
+             mainContentEl.style.display = 'block'; // Show content
+
+            eventNameEl.textContent = currentEventData.name || 'Event Details';
+            document.title = `${currentEventData.name || 'Event'} - Counter`; // Update page title
+
+            const total = calculateEventTotal(currentEventData);
+            eventTotalEl.innerHTML = `Total Attendance: <strong>${total}</strong>`;
+
+            countersContainer.innerHTML = ''; // Clear previous counters
+
+            const sortedCounters = currentEventData.counters ? [...currentEventData.counters].sort((a, b) => a.name.localeCompare(b.name)) : [];
+
+            if (sortedCounters.length === 0) {
+                countersContainer.innerHTML = '<p style="text-align: center; color: #666;">No counters (entrances) defined for this event.</p>';
+            } else {
+                sortedCounters.forEach(counter => {
+                    const counterCard = document.createElement('div');
+                    counterCard.className = 'entrance-counter';
+                    counterCard.dataset.counterId = counter.id;
+
+                    const nameDiv = document.createElement('div');
+                    nameDiv.className = 'entrance-name';
+                    nameDiv.textContent = counter.name;
+
+                    const valueDiv = document.createElement('div');
+                    valueDiv.className = 'entrance-value';
+                    valueDiv.textContent = counter.count ?? 0;
+
+                    const buttonsDiv = document.createElement('div');
+                    buttonsDiv.className = 'entrance-buttons';
+
+                    const minusBtn = document.createElement('button');
+                    minusBtn.className = 'minus';
+                    minusBtn.textContent = '−'; // Use minus sign
+                    minusBtn.disabled = !isSseConnected || counter.count <= 0;
+                    minusBtn.onclick = () => updateCount(currentEventId, counter.id, -1);
+
+                    const plusBtn = document.createElement('button');
+                    plusBtn.className = 'plus';
+                    plusBtn.textContent = '+';
+                    plusBtn.disabled = !isSseConnected;
+                    plusBtn.onclick = () => updateCount(currentEventId, counter.id, 1);
+
+                    buttonsDiv.appendChild(minusBtn);
+                    buttonsDiv.appendChild(plusBtn);
+
+                    counterCard.appendChild(nameDiv);
+                    counterCard.appendChild(valueDiv);
+                    counterCard.appendChild(buttonsDiv);
+
+                    countersContainer.appendChild(counterCard);
+                });
+            }
+             updateUiForConnectionState(isSseConnected); // Ensure buttons state is correct after render
+             showLoading(false); // Hide loading indicator after rendering
+        }
+
+        async function loadEventData(eventId) {
+            if (!eventId) {
+                 console.error("No Event ID provided.");
+                 errorMessageEl.textContent = "Error: No Event ID specified in the URL.";
+                 errorMessageEl.style.display = 'block';
+                 mainContentEl.style.display = 'none';
+                 showLoading(false);
+                 return;
+            }
+             showLoading(true);
+            try {
+                console.log(`Workspaceing data for event ID: ${eventId}`);
+                // *** YOU NEED THIS BACKEND ENDPOINT: GET /api/events/:eventId ***
+                const eventData = await apiRequest(`/events/${eventId}`);
+                currentEventData = eventData; // Store the fetched data
+                renderEventDetails(); // Render the data
+                showStatus("Event data loaded.", false);
+            } catch (error) {
+                console.error("Failed to load event data:", error);
+                errorMessageEl.textContent = `Error loading event: ${error.message}. Please check the Event ID and ensure the server is running.`;
+                errorMessageEl.style.display = 'block';
+                mainContentEl.style.display = 'none';
+                showLoading(false);
+                 // If loading failed, maybe stop trying to connect SSE? Or let it retry?
+                 // For now, let SSE attempt connection.
+            }
+            // No finally showLoading(false) here, renderEventDetails or error handles it
+        }
+
+        async function updateCount(eventId, counterId, change) {
+            // Optimistic UI update (optional, but good for responsiveness)
+            const counterCard = countersContainer.querySelector(`[data-counter-id="${counterId}"]`);
+            const valueDiv = counterCard?.querySelector('.entrance-value');
+            const minusBtn = counterCard?.querySelector('.minus');
+
+            if (valueDiv && currentEventData && currentEventData.counters) {
+                const counterIndex = currentEventData.counters.findIndex(c => c.id === counterId);
+                if (counterIndex > -1) {
+                    const currentCount = currentEventData.counters[counterIndex].count;
+                    // Prevent decrementing below zero visually
+                    if (change < 0 && currentCount <= 0) return;
+
+                    // Optimistically update count and total
+                    const newCount = currentCount + change;
+                    valueDiv.textContent = newCount;
+                    currentEventData.counters[counterIndex].count = newCount; // Update local state
+                    const total = calculateEventTotal(currentEventData);
+                    eventTotalEl.innerHTML = `Total Attendance: <strong>${total}</strong>`;
+
+
+                    // Optimistically disable/enable minus button
+                    if (minusBtn) {
+                         minusBtn.disabled = !isSseConnected || newCount <= 0;
+                    }
+                }
+            }
+
+            // Send request to server
+            try {
+                // *** USES THE SAME BACKEND ENDPOINT as index.html: PATCH /api/events/:eventId/counters/:counterId ***
+                await apiRequest(`/events/${eventId}/counters/${counterId}`, 'PATCH', { change });
+                // Success: SSE should confirm the state. If SSE fails, the optimistic update might be wrong.
+            } catch (error) {
+                // Revert optimistic update on failure
+                 showStatus(`Failed to update count: ${error.message}`, true);
+                console.error("Update failed, reverting optimistic change potentially.");
+                // Reload data to get the definite server state after an error
+                // Debounce this reload in case of rapid clicks causing errors
+                clearTimeout(window.revertTimer);
+                window.revertTimer = setTimeout(() => loadEventData(eventId), 1000);
+            }
+        }
+
+        // --- Updated SSE Event Handling for event.html ---
+        function handleSseMessage(event) {
+            try {
+                const data = JSON.parse(event.data);
+                console.log("SSE Received (Event View):", data);
+
+                // Ensure we have data and event data loaded before processing updates
+                if (!data || !data.payload || !currentEventData) {
+                    console.warn("SSE received with missing data or before event fully loaded.");
+                    return;
+                }
+
+                const payload = data.payload;
+
+                // Check if the update is relevant to *this* event
+                // Use consistent ID check (assuming backend sends event_id in counter payloads)
+                const relevantEventId = payload.event_id ?? payload.eventId ?? (payload.id === currentEventId ? payload.id : null); // Try different keys
+
+                if (relevantEventId && relevantEventId !== currentEventId) {
+                    console.log(`SSE update for different event (${relevantEventId}), ignoring.`);
+                    return; // Ignore updates for other events
+                }
+
+                let needsRender = false; // Flag to re-render only if state changed
+
+                switch (data.type) {
+                    case 'counter_updated':
+                        if (currentEventData.counters && payload.id) {
+                            const counterIndex = currentEventData.counters.findIndex(c => c.id === payload.id);
+                            if (counterIndex > -1) {
+                                // Update existing counter directly
+                                currentEventData.counters[counterIndex] = { ...currentEventData.counters[counterIndex], ...payload };
+                                console.log(`Updated counter ${payload.id} state locally.`);
+                                needsRender = true;
+                            } else {
+                                console.warn(`Received counter_updated for unknown counter ID ${payload.id}`);
+                                // Fallback: Reload data if something seems off
+                                loadEventData(currentEventId);
+                            }
+                        }
+                        break;
+
+                    case 'counter_added':
+                        if (currentEventData.counters && payload.id) {
+                            // Avoid adding duplicates if message arrives multiple times
+                            if (!currentEventData.counters.some(c => c.id === payload.id)) {
+                                currentEventData.counters.push(payload);
+                                console.log(`Added counter ${payload.id} state locally.`);
+                                needsRender = true;
+                            }
+                        }
+                        break;
+
+                    case 'counter_removed':
+                        if (currentEventData.counters && payload.counterId) {
+                            const initialLength = currentEventData.counters.length;
+                            currentEventData.counters = currentEventData.counters.filter(c => c.id !== payload.counterId);
+                            if (currentEventData.counters.length < initialLength) {
+                                console.log(`Removed counter ${payload.counterId} state locally.`);
+                                needsRender = true;
+                            }
+                        }
+                        break;
+
+                    case 'event_removed':
+                        if (payload.eventId === currentEventId) {
+                            console.warn("The event being viewed was removed.");
+                            showStatus("This event has been removed.", true);
+                            errorMessageEl.textContent = "This event no longer exists.";
+                            errorMessageEl.style.display = 'block';
+                            mainContentEl.style.display = 'none';
+                            if (sseSource) sseSource.close(); // Stop listening
+                            updateUiForConnectionState(false); // Disable buttons
+                            needsRender = false; // No need to render main content
+                        }
+                        break;
+
+                    case 'event_updated': // Handle potential event name changes etc.
+                        if (payload.id === currentEventId) {
+                            console.log("Event details (like name) updated, updating locally.");
+                            currentEventData = { ...currentEventData, ...payload }; // Merge changes
+                            // Ensure counters are preserved if not part of payload
+                            currentEventData.counters = currentEventData.counters || [];
+                            needsRender = true;
+                        }
+                        break;
+
+                    case 'connected':
+                        console.log(`SSE Connected with Client ID: ${payload?.clientId}`);
+                        // Connection established, load data if not already loaded
+                        if (!currentEventData && currentEventId) {
+                            loadEventData(currentEventId); // Initial load or reload on reconnect
+                        }
+                        break;
+                    case 'error':
+                        showStatus(`Server Error: ${payload.message}`, true);
+                        break;
+                    default:
+                        console.warn("Received unknown SSE event type:", data.type);
+                }
+
+                // Re-render the UI only if the local state was changed
+                if (needsRender) {
+                    console.log("Calling renderEventDetails due to state change.");
+                    renderEventDetails();
+                }
+
+            } catch (error) {
+                console.error("Error parsing or handling SSE data:", error, "Raw data:", event.data);
+                showStatus("Received invalid update from server.", true);
+                // Consider a fallback reload if parsing/handling fails repeatedly
+                // loadEventData(currentEventId);
+            }
+        }
+
+        function connectSSE() {
+            // ... (This function can be copied/adapted from index.html) ...
+            // ... Ensure it calls the correct endpoint: /api/events/stream ...
+             if (sseSource && sseSource.readyState !== EventSource.CLOSED) {
+                 console.log("SSE connection already open or connecting.");
+                 return;
+             }
+
+             setConnectionStatus('connecting', 'Connecting...');
+             sseSource = new EventSource(`${API_URL}/events/stream`); // Same stream endpoint
+
+             sseSource.onopen = () => {
+                 console.log("SSE Connection Opened (Event View)");
+                 setConnectionStatus('connected', 'Connected');
+                  showStatus("Real-time updates enabled.", false);
+                 // Re-load data on successful connection/reconnection to ensure sync
+                 if(currentEventId) {
+                     loadEventData(currentEventId);
+                 }
+             };
+
+             sseSource.onmessage = handleSseMessage;
+
+             sseSource.onerror = (error) => {
+                 console.error("SSE Error (Event View):", error);
+                 setConnectionStatus('disconnected', 'Disconnected');
+                 showStatus("Connection error. Reconnecting...", true);
+                 sseSource.close();
+                 // Explicit reconnect attempt after a delay
+                  setTimeout(connectSSE, 5000);
+             };
+        }
+
+
+        // --- Initialization ---
+        function init() {
+             setConnectionStatus('connecting', 'Connecting...');
+
+             // Get event ID from URL query parameter
+             const urlParams = new URLSearchParams(window.location.search);
+             currentEventId = urlParams.get('eventId');
+             console.log("Page loaded for Event ID:", currentEventId);
+
+
+            if (!currentEventId) {
+                 console.error("Initialization failed: No eventId in URL query string.");
+                 errorMessageEl.textContent = "Cannot display event: Missing 'eventId' in URL.";
+                 errorMessageEl.style.display = 'block';
+                 mainContentEl.style.display = 'none';
+                 setConnectionStatus('disconnected', 'Error');
+                 showLoading(false);
+                 return; // Stop initialization
+             }
+
+            // Start loading data first
+             loadEventData(currentEventId);
+
+             // Then, establish SSE connection for real-time updates
+             connectSSE();
+        }
+
+        // Start the application
+        window.onload = init;
+
+    </script>
+</body>
+</html>

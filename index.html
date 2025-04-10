@@ -478,109 +478,192 @@
             return event.counters.reduce((sum, counter) => sum + (counter.count || 0), 0);
         }
 
-        function renderEvents() {
-             console.log("Rendering events:", events); // Debug log
-            if (!events || events.length === 0) {
-                 // Message content is handled by setConnectionStatus now
-                 noEventsMessage.style.display = 'block';
-                eventsContainer.innerHTML = '';
-                eventsContainer.appendChild(noEventsMessage); // Ensure message is inside container
-                return;
-            }
+// --- Rendering (index.html) ---
 
-            noEventsMessage.style.display = 'none';
-            eventsContainer.innerHTML = ''; // Clear previous rendering
+     // Helper function (should exist elsewhere in your script)
+     function calculateEventTotal(event) {
+         if (!event || !Array.isArray(event.counters)) return 0;
+         return event.counters.reduce((sum, counter) => sum + (counter.count || 0), 0);
+     }
 
-            // Sort events perhaps? By name or date? Optional.
-            // events.sort((a, b) => a.name.localeCompare(b.name));
+     function renderEvents() {
+         console.log("Rendering events on main page:", events); // Debug log
 
-            events.forEach(event => {
-                const eventDiv = document.createElement('div');
-                eventDiv.className = 'event-container';
-                eventDiv.dataset.eventId = event.id;
+         // Get references to containers (assuming these are defined globally in the script)
+         // const eventsContainer = document.getElementById('eventsContainer');
+         // const noEventsMessage = document.getElementById('noEventsMessage');
+         // let isSseConnected = ...; // Assumes this variable is updated elsewhere
 
-                const eventTotal = calculateEventTotal(event);
+         if (!events || events.length === 0) {
+             // Message content is handled by setConnectionStatus, just control visibility
+             if (isSseConnected) {
+                noEventsMessage.textContent = 'No events created yet. Add one above!';
+             } // The 'connecting' or 'disconnected' messages are handled elsewhere
+             noEventsMessage.style.display = 'block';
+             eventsContainer.innerHTML = ''; // Clear any previous events
+             // Ensure the message element is inside the container if it wasn't already
+             if (!eventsContainer.contains(noEventsMessage)) {
+                  eventsContainer.appendChild(noEventsMessage);
+             }
+             return;
+         }
 
-                const eventHeader = document.createElement('div');
-                eventHeader.style.display = 'flex';
-                eventHeader.style.justifyContent = 'space-between';
-                eventHeader.style.alignItems = 'center';
+         // If we have events, hide the 'no events' message and clear the container
+         noEventsMessage.style.display = 'none';
+         eventsContainer.innerHTML = '';
 
-                const eventTitle = document.createElement('h2');
-                eventTitle.textContent = event.name;
-                eventHeader.appendChild(eventTitle);
+         // Optional: Sort events alphabetically by name
+         const sortedEvents = [...events].sort((a, b) => a.name.localeCompare(b.name));
 
-                const removeEventBtn = document.createElement('button');
-                removeEventBtn.className = 'remove';
-                removeEventBtn.textContent = 'Remove Event';
-                removeEventBtn.disabled = !isSseConnected; // Disable based on SSE connection
-                removeEventBtn.onclick = () => removeEvent(event.id);
-                eventHeader.appendChild(removeEventBtn);
-                eventDiv.appendChild(eventHeader);
+         sortedEvents.forEach(event => {
+             const eventDiv = document.createElement('div');
+             eventDiv.className = 'event-container';
+             eventDiv.dataset.eventId = event.id; // Store event ID for reference
 
-                const totalDiv = document.createElement('div');
-                totalDiv.style.marginBottom = '15px';
-                totalDiv.style.fontSize = '18px';
-                totalDiv.innerHTML = `Total Attendance: <strong>${eventTotal}</strong> people`;
-                eventDiv.appendChild(totalDiv);
+             const eventTotal = calculateEventTotal(event);
 
-                // Sort counters? Optional.
-                const sortedCounters = event.counters ? [...event.counters].sort((a, b) => a.name.localeCompare(b.name)) : [];
+             // --- Event Header ---
+             const eventHeader = document.createElement('div');
+             eventHeader.style.display = 'flex';
+             eventHeader.style.justifyContent = 'space-between';
+             eventHeader.style.alignItems = 'flex-start'; // Align items to the top for better wrapping
+             eventHeader.style.marginBottom = '10px';
+             eventHeader.style.flexWrap = 'wrap'; // Allow wrapping on smaller screens
 
-                sortedCounters.forEach(counter => {
-                    const counterDiv = document.createElement('div');
-                    counterDiv.className = 'counter-container';
-                    counterDiv.dataset.counterId = counter.id;
+             // --- Title and Total (Left Side) ---
+             const titleAndTotalDiv = document.createElement('div');
+             titleAndTotalDiv.style.flexGrow = '1'; // Allow this section to grow
+             titleAndTotalDiv.style.marginRight = '10px'; // Space before buttons
 
-                    const nameDiv = document.createElement('div');
-                    nameDiv.className = 'counter-name';
-                    nameDiv.textContent = counter.name;
-                    counterDiv.appendChild(nameDiv);
+             const eventTitle = document.createElement('h2');
+             eventTitle.textContent = event.name;
+             eventTitle.style.marginBottom = '5px';
+             eventTitle.style.marginTop = '0'; // Remove default margin
+             titleAndTotalDiv.appendChild(eventTitle);
 
-                    const valueDiv = document.createElement('div');
-                    valueDiv.className = 'counter-value';
-                    valueDiv.textContent = counter.count ?? 0;
-                    counterDiv.appendChild(valueDiv);
+             const totalDiv = document.createElement('div');
+             totalDiv.style.fontSize = '18px';
+             totalDiv.innerHTML = `Total Attendance: <strong>${eventTotal}</strong>`;
+             titleAndTotalDiv.appendChild(totalDiv);
 
-                    const minusBtn = document.createElement('button');
-                    minusBtn.className = 'minus';
-                    minusBtn.textContent = '-';
-                    minusBtn.disabled = !isSseConnected || counter.count <= 0;
-                    minusBtn.onclick = () => updateCount(event.id, counter.id, -1);
-                    counterDiv.appendChild(minusBtn);
+             eventHeader.appendChild(titleAndTotalDiv);
 
-                    const plusBtn = document.createElement('button');
-                    plusBtn.textContent = '+';
-                    plusBtn.disabled = !isSseConnected;
-                    plusBtn.onclick = () => updateCount(event.id, counter.id, 1);
-                    counterDiv.appendChild(plusBtn);
+             // --- Action Buttons (Right Side) ---
+             const eventActionsDiv = document.createElement('div');
+             eventActionsDiv.style.display = 'flex';
+             eventActionsDiv.style.gap = '5px'; // Space between buttons
+             eventActionsDiv.style.alignItems = 'center'; // Vertically align buttons
+             eventActionsDiv.style.flexShrink = '0'; // Prevent buttons from shrinking too much
 
-                    const removeCounterBtn = document.createElement('button');
-                    removeCounterBtn.className = 'remove';
-                    removeCounterBtn.textContent = '×';
-                    removeCounterBtn.disabled = !isSseConnected || (event.counters && event.counters.length <= 1);
-                    removeCounterBtn.title = (event.counters && event.counters.length <= 1) ? "Cannot remove the last counter" : "Remove counter";
-                    removeCounterBtn.onclick = () => removeCounter(event.id, counter.id);
-                    counterDiv.appendChild(removeCounterBtn);
 
-                    eventDiv.appendChild(counterDiv);
-                });
+             // 'Open Counter View' Button
+             const openViewBtn = document.createElement('button');
+             openViewBtn.textContent = 'Open Counter View';
+             openViewBtn.title = 'Open simplified counter view in new tab';
+             // openViewBtn.style.marginRight = '5px'; // Use gap instead
+             openViewBtn.disabled = !isSseConnected; // Disable if not connected
+             openViewBtn.onclick = () => {
+                 // Open event.html in a new tab, passing the event ID
+                 window.open(`event.html?eventId=${event.id}`, `_blank`);
+             };
+             eventActionsDiv.appendChild(openViewBtn);
 
-                const addCounterDiv = document.createElement('div');
-                addCounterDiv.style.marginTop = '10px';
+             // 'Remove Event' Button
+             const removeEventBtn = document.createElement('button');
+             removeEventBtn.className = 'remove';
+             removeEventBtn.textContent = 'Remove Event';
+             removeEventBtn.disabled = !isSseConnected; // Disable if not connected
+             removeEventBtn.onclick = () => removeEvent(event.id); // Assumes removeEvent function exists
+             eventActionsDiv.appendChild(removeEventBtn);
 
-                const addCounterBtn = document.createElement('button');
-                addCounterBtn.textContent = 'Add Counter';
-                addCounterBtn.disabled = !isSseConnected;
-                addCounterBtn.onclick = () => addCounter(event.id);
-                addCounterDiv.appendChild(addCounterBtn);
-                eventDiv.appendChild(addCounterDiv);
+             eventHeader.appendChild(eventActionsDiv);
+             eventDiv.appendChild(eventHeader);
 
-                eventsContainer.appendChild(eventDiv);
-            });
-              // Update UI disabled state after rendering, just in case
-             updateUiForConnectionState(isSseConnected);
-        }
+             // --- Separator ---
+             const separator = document.createElement('hr');
+             separator.style.border = 'none';
+             separator.style.borderTop = '1px solid #eee';
+             separator.style.margin = '15px 0';
+             eventDiv.appendChild(separator);
+
+             // --- Counters List ---
+             // Optional: Sort counters alphabetically by name
+             const sortedCounters = event.counters ? [...event.counters].sort((a, b) => a.name.localeCompare(b.name)) : [];
+
+             if (sortedCounters.length > 0) {
+                 sortedCounters.forEach(counter => {
+                     const counterDiv = document.createElement('div');
+                     counterDiv.className = 'counter-container';
+                     counterDiv.dataset.counterId = counter.id; // Store counter ID
+
+                     const nameDiv = document.createElement('div');
+                     nameDiv.className = 'counter-name';
+                     nameDiv.textContent = counter.name;
+                     counterDiv.appendChild(nameDiv);
+
+                     const valueDiv = document.createElement('div');
+                     valueDiv.className = 'counter-value';
+                     valueDiv.textContent = counter.count ?? 0; // Handle null/undefined counts
+                     counterDiv.appendChild(valueDiv);
+
+                     // Minus Button
+                     const minusBtn = document.createElement('button');
+                     minusBtn.className = 'minus';
+                     minusBtn.textContent = '-';
+                     minusBtn.disabled = !isSseConnected || (counter.count ?? 0) <= 0;
+                     minusBtn.onclick = () => updateCount(event.id, counter.id, -1); // Assumes updateCount exists
+                     counterDiv.appendChild(minusBtn);
+
+                     // Plus Button
+                     const plusBtn = document.createElement('button');
+                     plusBtn.textContent = '+';
+                     plusBtn.disabled = !isSseConnected;
+                     plusBtn.onclick = () => updateCount(event.id, counter.id, 1); // Assumes updateCount exists
+                     counterDiv.appendChild(plusBtn);
+
+                     // Remove Counter Button
+                     const canRemoveCounter = isSseConnected && (!event.counters || event.counters.length > 1);
+                     const removeCounterBtn = document.createElement('button');
+                     removeCounterBtn.className = 'remove';
+                     removeCounterBtn.textContent = '×'; // Multiplication sign for 'remove'
+                     removeCounterBtn.disabled = !canRemoveCounter;
+                     removeCounterBtn.title = canRemoveCounter ? "Remove counter" : "Cannot remove the last counter";
+                     removeCounterBtn.onclick = () => removeCounter(event.id, counter.id); // Assumes removeCounter exists
+                     counterDiv.appendChild(removeCounterBtn);
+
+                     eventDiv.appendChild(counterDiv);
+                 });
+             } else {
+                 // Optional: Message if an event has no counters
+                 const noCountersMsg = document.createElement('p');
+                 noCountersMsg.textContent = 'No counters added to this event yet.';
+                 noCountersMsg.style.color = '#666';
+                 noCountersMsg.style.fontStyle = 'italic';
+                 noCountersMsg.style.textAlign = 'center';
+                 noCountersMsg.style.padding = '10px 0';
+                 eventDiv.appendChild(noCountersMsg);
+             }
+
+
+             // --- Add Counter Button ---
+             const addCounterDiv = document.createElement('div');
+             addCounterDiv.style.marginTop = '15px'; // More space before add button
+             addCounterDiv.style.textAlign = 'right'; // Align button to the right
+
+             const addCounterBtn = document.createElement('button');
+             addCounterBtn.textContent = 'Add Counter';
+             addCounterBtn.disabled = !isSseConnected;
+             addCounterBtn.onclick = () => addCounter(event.id); // Assumes addCounter function exists
+             addCounterDiv.appendChild(addCounterBtn);
+             eventDiv.appendChild(addCounterDiv);
+
+             // --- Append the fully built event card to the main container ---
+             eventsContainer.appendChild(eventDiv);
+         });
+
+         // Ensure UI reflects connection state after rendering all elements
+         updateUiForConnectionState(isSseConnected); // Assumes updateUiForConnectionState exists
+     }
 
         // --- Initialization ---
         function init() {

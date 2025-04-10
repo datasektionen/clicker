@@ -18,12 +18,16 @@ let clients = []; // Array to hold connected client response objects for SSE
 function broadcastUpdate(data) {
     const sseFormattedData = `data: ${JSON.stringify(data)}\n\n`; // SSE format
     console.log(`Broadcasting update: ${JSON.stringify(data)}`);
+    // Inside broadcastUpdate function (Optional minor change)
     clients.forEach(client => {
         try {
             client.res.write(sseFormattedData);
         } catch (error) {
             console.error(`Error sending SSE to client ${client.id}:`, error);
-            // Optionally remove client if write fails, though 'close' event is better
+            // Optional: Immediately remove client if write fails
+            // client.res.end(); // Close the specific response stream
+            // clients = clients.filter(c => c.id !== client.id);
+            // console.log(`Client ${client.id} removed due to write error. Total clients: ${clients.length}`);
         }
     });
 }
@@ -323,6 +327,54 @@ app.use((err, req, res, next) => {
         // Headers sent, but not SSE? Log and attempt end.
         console.error("Error occurred after headers sent on non-SSE request:", req.path);
         res.end();
+    }
+});
+
+// Presuming you have your Express app ('app') and pg Pool ('pool') set up
+
+// GET /api/events/:eventId - Fetch a single event with its counters
+app.get('/api/events/:eventId', async (req, res) => {
+    const { eventId } = req.params;
+    const parsedEventId = parseInt(eventId); // Parse earlier for validation
+
+    console.log(`[API] Request received for event ID: ${parsedEventId}`);
+
+    // Validate the parsed ID
+    if (isNaN(parsedEventId) || parsedEventId <= 0) { // More robust check
+        console.log(`[API] Invalid event ID received: ${eventId}`);
+        // Use sendError for consistency and ensure function stops
+        return sendError(res, 400, 'Invalid Event ID format.');
+    }
+
+    try {
+        // First, get the event details using db.query
+        const eventResult = await db.query('SELECT id, name, created_at FROM events WHERE id = $1', [parsedEventId]);
+
+        if (eventResult.rows.length === 0) {
+            console.log(`[API] Event not found for ID: ${parsedEventId}`);
+            // Use sendError for consistency and ensure function stops
+            return sendError(res, 404, 'Event not found.');
+        }
+
+        const event = eventResult.rows[0];
+
+        // Then, get the counters for this event using db.query
+        const countersResult = await db.query(
+            'SELECT id, event_id, name, count, created_at FROM counters WHERE event_id = $1 ORDER BY name ASC',
+            [parsedEventId] // Use the parsed ID
+        );
+
+        // Attach counters to the event object (always initialize as an array)
+        event.counters = countersResult.rows || [];
+
+        console.log(`[API] Sending data for event ID: ${parsedEventId}`);
+        res.json(event); // Send the combined event and counters data
+
+    } catch (error) {
+        // Catch errors from either db.query call
+        console.error(`[API] Error fetching event ${parsedEventId}:`, error);
+        // Use sendError for consistency
+        sendError(res, 500, 'Error fetching event data from database.');
     }
 });
 
