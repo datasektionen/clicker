@@ -275,84 +275,93 @@
 
 
          // --- SSE Event Handling ---
-         function handleSseMessage(event) {
-             try {
-                 const data = JSON.parse(event.data);
-                 console.log("SSE Received:", data);
+        function handleSseMessage(event) { // In index.html
+            try {
+                const data = JSON.parse(event.data);
+                console.log("SSE Received (Main View):", data);
+                const payload = data.payload;
+                let needsRender = false;
 
-                 switch (data.type) {
-                     case 'connected':
-                         // Optional: log connection ID or perform initial setup
-                         console.log(`SSE Connected with Client ID: ${data.payload?.clientId}`);
-                         // Initial data load should happen separately via REST
-                         break;
-                     case 'event_added':
-                         // Avoid duplicates if the event adding client gets the SSE too
-                         if (!events.some(e => e.id === data.payload.id)) {
-                            // Ensure counters array exists
-                            data.payload.counters = data.payload.counters || [];
-                            events.push(data.payload);
-                            showStatus(`New event added: "${data.payload.name}"`);
-                         }
-                         break;
-                     case 'event_removed':
-                         const removedEventId = data.payload.eventId;
-                         const removedEventIndex = events.findIndex(e => e.id === removedEventId);
-                          if (removedEventIndex > -1) {
-                            const removedEventName = events[removedEventIndex].name;
-                            events.splice(removedEventIndex, 1);
-                            showStatus(`Event removed: "${removedEventName}"`);
-                          }
-                         break;
-                     case 'counter_added':
-                         const targetEventAdd = events.find(e => e.id === data.payload.event_id);
-                         if (targetEventAdd) {
-                             // Ensure counters array exists
-                             targetEventAdd.counters = targetEventAdd.counters || [];
-                             // Avoid duplicates
-                             if (!targetEventAdd.counters.some(c => c.id === data.payload.id)) {
-                                 targetEventAdd.counters.push(data.payload);
-                                 showStatus(`Counter "${data.payload.name}" added to "${targetEventAdd.name}"`);
-                             }
-                         }
-                         break;
-                     case 'counter_removed':
-                         const targetEventRemove = events.find(e => e.id === data.payload.eventId);
-                         if (targetEventRemove && targetEventRemove.counters) {
-                             const removedCounterIndex = targetEventRemove.counters.findIndex(c => c.id === data.payload.counterId);
-                             if (removedCounterIndex > -1) {
-                                const removedCounterName = targetEventRemove.counters[removedCounterIndex].name;
-                                targetEventRemove.counters.splice(removedCounterIndex, 1);
-                                showStatus(`Counter "${removedCounterName}" removed from "${targetEventRemove.name}"`);
-                             }
-                         }
-                         break;
-                     case 'counter_updated':
-                         const targetEventUpdate = events.find(e => e.id === data.payload.event_id);
-                         if (targetEventUpdate && targetEventUpdate.counters) {
-                             const targetCounterUpdate = targetEventUpdate.counters.find(c => c.id === data.payload.id);
-                             if (targetCounterUpdate) {
-                                 targetCounterUpdate.count = data.payload.count;
-                                 // Maybe don't show status for every single count update? It could be noisy.
-                                 // showStatus(`Counter "${targetCounterUpdate.name}" updated`);
-                             }
-                         }
-                         break;
-                    case 'error': // Handle errors broadcast by server (optional)
-                        showStatus(`Server Error: ${data.payload.message}`, true);
+                // Find the target event in the global 'events' array
+                let targetEvent, targetEventIndex;
+                const eventIdToFind = payload.event_id ?? payload.eventId ?? payload.id; // Find relevant event ID
+
+                if (eventIdToFind) {
+                    targetEventIndex = events.findIndex(e => e.id === eventIdToFind);
+                    targetEvent = events[targetEventIndex];
+                }
+
+
+                switch (data.type) {
+                    case 'event_added':
+                        if (!events.some(e => e.id === payload.id)) {
+                            events.push(payload); // Add the new event object
+                            needsRender = true;
+                        }
                         break;
-                     default:
-                         console.warn("Received unknown SSE event type:", data.type);
-                 }
+                    case 'event_removed':
+                        const initialLength = events.length;
+                        events = events.filter(e => e.id !== payload.eventId);
+                        if (events.length < initialLength) {
+                            needsRender = true;
+                        }
+                        break;
+                    case 'event_updated': // e.g., name change
+                        if (targetEvent) {
+                            // Merge updates into the event object
+                            events[targetEventIndex] = { ...targetEvent, ...payload };
+                            needsRender = true;
+                        }
+                        break;
 
-                 // Re-render after any state change
-                 renderEvents();
+                    case 'counter_added':
+                        if (targetEvent) {
+                            targetEvent.counters = targetEvent.counters || [];
+                            if (!targetEvent.counters.some(c => c.id === payload.id)) {
+                                targetEvent.counters.push(payload);
+                                needsRender = true;
+                            }
+                        }
+                        break;
+                    case 'counter_removed':
+                        if (targetEvent && targetEvent.counters) {
+                            const initialCounterLength = targetEvent.counters.length;
+                            targetEvent.counters = targetEvent.counters.filter(c => c.id !== payload.counterId);
+                            if (targetEvent.counters.length < initialCounterLength) {
+                                needsRender = true;
+                            }
+                        }
+                        break;
+                    case 'counter_updated':
+                        if (targetEvent && targetEvent.counters) {
+                            const counterIndex = targetEvent.counters.findIndex(c => c.id === payload.id);
+                            if (counterIndex > -1) {
+                                // Update the specific counter within the event
+                                targetEvent.counters[counterIndex] = { ...targetEvent.counters[counterIndex], ...payload };
+                                needsRender = true;
+                            }
+                        }
+                        break;
+                    case 'connected':
+                        console.log(`SSE Connected with Client ID: ${payload?.clientId}`);
+                        // Load initial data via loadEvents() if needed (handled in init/onopen)
+                        break;
+                    case 'error':
+                        showStatus(`Server Error: ${payload.message}`, true);
+                        break;
+                    // ... other cases ...
+                }
 
-             } catch (error) {
-                 console.error("Error parsing SSE data:", error, "Raw data:", event.data);
-                 showStatus("Received invalid update from server.", true);
-             }
-         }
+                if (needsRender) {
+                    console.log("Calling renderEvents due to state change.");
+                    renderEvents(); // Re-render the entire list on the main page
+                }
+
+            } catch (error) {
+                console.error("Error parsing or handling SSE data (Main View):", error, "Raw data:", event.data);
+                showStatus("Received invalid update from server.", true);
+            }
+        }
 
         function connectSSE() {
             if (sseSource && sseSource.readyState !== EventSource.CLOSED) {

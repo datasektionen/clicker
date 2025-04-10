@@ -403,54 +403,81 @@
 
         // --- Updated SSE Event Handling for event.html ---
         function handleSseMessage(event) {
+            console.log("SSE Raw data received:", event.data); // Log raw data first
             try {
                 const data = JSON.parse(event.data);
-                console.log("SSE Received (Event View):", data);
+                console.log("SSE Parsed data:", data);
 
-                // Ensure we have data and event data loaded before processing updates
-                if (!data || !data.payload || !currentEventData) {
-                    console.warn("SSE received with missing data or before event fully loaded.");
+                // Defend against messages arriving before initial load is complete
+                if (!currentEventId) {
+                    console.warn("SSE message received, but currentEventId is not set yet. Ignoring.");
+                    return;
+                }
+                if (!currentEventData) {
+                    console.warn("SSE message received, but currentEventData is not loaded yet. Ignoring.");
+                    // Optionally trigger a load if it seems stuck? Be careful with loops.
+                    // loadEventData(currentEventId);
+                    return;
+                }
+                if (!data || !data.payload) {
+                    console.warn("SSE message received without valid data or payload. Ignoring.");
                     return;
                 }
 
                 const payload = data.payload;
+                const type = data.type;
 
-                // Check if the update is relevant to *this* event
-                // Use consistent ID check (assuming backend sends event_id in counter payloads)
-                const relevantEventId = payload.event_id ?? payload.eventId ?? (payload.id === currentEventId ? payload.id : null); // Try different keys
-
-                if (relevantEventId && relevantEventId !== currentEventId) {
-                    console.log(`SSE update for different event (${relevantEventId}), ignoring.`);
-                    return; // Ignore updates for other events
+                // --- Detailed ID checking ---
+                let payloadEventId = null;
+                if (type === 'event_removed' || type === 'event_updated') {
+                    payloadEventId = payload.eventId ?? payload.id; // Event-level actions use eventId/id
+                } else if (type.startsWith('counter_')) {
+                    payloadEventId = payload.event_id; // Counter actions should have event_id
                 }
+                console.log(`SSE Handler: Message Type: ${type}, Current Page Event ID: ${currentEventId}, Payload Event ID: ${payloadEventId}`);
+                // --- End ID checking ---
+
+                // Filter: Check if the message is for the event this page is displaying
+                if (payloadEventId && payloadEventId !== currentEventId) {
+                    console.log(`SSE Handler: IGNORING update for different event (${payloadEventId}).`);
+                    return;
+                }
+                console.log(`SSE Handler: PROCESSING update for event ${currentEventId}.`);
 
                 let needsRender = false; // Flag to re-render only if state changed
 
-                switch (data.type) {
+                switch (type) {
                     case 'counter_updated':
                         if (currentEventData.counters && payload.id) {
                             const counterIndex = currentEventData.counters.findIndex(c => c.id === payload.id);
                             if (counterIndex > -1) {
                                 // Update existing counter directly
+                                // Ensure we don't overwrite fields not in payload if it's partial
                                 currentEventData.counters[counterIndex] = { ...currentEventData.counters[counterIndex], ...payload };
-                                console.log(`Updated counter ${payload.id} state locally.`);
+                                console.log(`State Update: Updated counter ${payload.id} to count ${payload.count}. New local state:`, currentEventData.counters[counterIndex]);
                                 needsRender = true;
                             } else {
-                                console.warn(`Received counter_updated for unknown counter ID ${payload.id}`);
-                                // Fallback: Reload data if something seems off
-                                loadEventData(currentEventId);
+                                console.warn(`SSE Handler: Received counter_updated for counter ID ${payload.id}, but not found in local state:`, currentEventData.counters);
+                                // Maybe reload as a fallback?
+                                // loadEventData(currentEventId);
                             }
+                        } else {
+                            console.warn("SSE Handler: counter_updated received but local counters missing or payload has no ID.");
                         }
                         break;
 
                     case 'counter_added':
-                        if (currentEventData.counters && payload.id) {
-                            // Avoid adding duplicates if message arrives multiple times
+                        if (!currentEventData.counters) currentEventData.counters = []; // Ensure array exists
+                        if (payload.id) {
                             if (!currentEventData.counters.some(c => c.id === payload.id)) {
                                 currentEventData.counters.push(payload);
-                                console.log(`Added counter ${payload.id} state locally.`);
+                                console.log(`State Update: Added counter ${payload.id}. New local state:`, payload);
                                 needsRender = true;
+                            } else {
+                                console.log(`SSE Handler: Received counter_added for existing counter ID ${payload.id}. Ignoring duplicate add.`);
                             }
+                        } else {
+                            console.warn("SSE Handler: counter_added received but payload has no ID.");
                         }
                         break;
 
@@ -459,60 +486,66 @@
                             const initialLength = currentEventData.counters.length;
                             currentEventData.counters = currentEventData.counters.filter(c => c.id !== payload.counterId);
                             if (currentEventData.counters.length < initialLength) {
-                                console.log(`Removed counter ${payload.counterId} state locally.`);
+                                console.log(`State Update: Removed counter ${payload.counterId}.`);
                                 needsRender = true;
+                            } else {
+                                console.log(`SSE Handler: Received counter_removed for counter ID ${payload.counterId}, but not found locally.`);
                             }
+                        } else {
+                            console.warn("SSE Handler: counter_removed received but local counters missing or payload has no counterId.");
                         }
                         break;
 
                     case 'event_removed':
-                        if (payload.eventId === currentEventId) {
-                            console.warn("The event being viewed was removed.");
-                            showStatus("This event has been removed.", true);
-                            errorMessageEl.textContent = "This event no longer exists.";
-                            errorMessageEl.style.display = 'block';
-                            mainContentEl.style.display = 'none';
-                            if (sseSource) sseSource.close(); // Stop listening
-                            updateUiForConnectionState(false); // Disable buttons
-                            needsRender = false; // No need to render main content
-                        }
+                        // This logic seems okay - it affects the whole page state
+                        console.warn("This event has been removed.");
+                        showStatus("This event has been removed.", true);
+                        errorMessageEl.textContent = "This event no longer exists.";
+                        errorMessageEl.style.display = 'block';
+                        mainContentEl.style.display = 'none';
+                        if (sseSource) sseSource.close();
+                        updateUiForConnectionState(false);
+                        needsRender = false;
                         break;
 
-                    case 'event_updated': // Handle potential event name changes etc.
-                        if (payload.id === currentEventId) {
-                            console.log("Event details (like name) updated, updating locally.");
-                            currentEventData = { ...currentEventData, ...payload }; // Merge changes
-                            // Ensure counters are preserved if not part of payload
-                            currentEventData.counters = currentEventData.counters || [];
-                            needsRender = true;
-                        }
+                    case 'event_updated':
+                        console.log("Event details (like name) updated, updating locally.");
+                        // Be careful here: payload might only contain changed fields. Merge carefully.
+                        // Ensure counters aren't wiped out if payload doesn't include them.
+                        const existingCounters = currentEventData.counters;
+                        currentEventData = { ...currentEventData, ...payload }; // Merge changes
+                        currentEventData.counters = payload.counters || existingCounters || []; // Prioritize payload counters, fallback to existing
+                        console.log("State Update: Updated event data. New local state:", currentEventData);
+                        needsRender = true;
                         break;
 
                     case 'connected':
                         console.log(`SSE Connected with Client ID: ${payload?.clientId}`);
-                        // Connection established, load data if not already loaded
+                        // Reload data on (re)connect if not present or explicitly desired
                         if (!currentEventData && currentEventId) {
-                            loadEventData(currentEventId); // Initial load or reload on reconnect
+                            loadEventData(currentEventId);
                         }
                         break;
                     case 'error':
                         showStatus(`Server Error: ${payload.message}`, true);
                         break;
                     default:
-                        console.warn("Received unknown SSE event type:", data.type);
+                        console.warn("Received unknown SSE event type:", type);
                 }
 
-                // Re-render the UI only if the local state was changed
+                // Re-render the UI ONLY if the local state was changed
                 if (needsRender) {
-                    console.log("Calling renderEventDetails due to state change.");
+                    console.log("Calling renderEventDetails because needsRender is true.");
                     renderEventDetails();
+                } else {
+                    console.log("No state change detected, skipping re-render.");
                 }
 
             } catch (error) {
-                console.error("Error parsing or handling SSE data:", error, "Raw data:", event.data);
-                showStatus("Received invalid update from server.", true);
-                // Consider a fallback reload if parsing/handling fails repeatedly
-                // loadEventData(currentEventId);
+                console.error("!!! CRITICAL: Error parsing or handling SSE data:", error, "Raw data:", event.data);
+                showStatus("Error processing server update.", true);
+                // Maybe force a reload if errors persist?
+                // setTimeout(() => loadEventData(currentEventId), 2000);
             }
         }
 
